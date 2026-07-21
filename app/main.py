@@ -19,7 +19,7 @@ from prompts import (
 )
 
 from guardrail import guardrail_entrada, guardrail_saida, anonimizar_entrada
-from memory_mongodb import iniciar_sessao, salvar_mensagem, encerrar_sessao, recuperar_historico, recuperar_mensagens
+from memory_mongodb import iniciar_sessao, salvar_mensagem, encerrar_sessao
 from langchain_core.messages import RemoveMessage
 from tools.memory_tools import TOOLS_MEMORIA
 
