@@ -1,2 +1,5 @@
 .env
 .vscode
+app/__pycache__/
+app/routes/__pycache__/
+app/tools/__pycache__/
