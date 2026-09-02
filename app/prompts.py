@@ -49,7 +49,6 @@ ROUTER_PROMPT = f"""
 - agenda     : compromissos, eventos, lembretes, tarefas, horários, conflitos.
 - faq        : dúvidas sobre o Assessor.AI - regras, políticas, termos, responsabilidade, restrições, privacidade, segurança e comportamento previsto do sistema.
 
-<<<<<<< HEAD
 ### MEMÓRIA DE CONVERSAS ANTERIORES
 Você tem a tool `buscar_historico`, que consulta os RESUMOS de conversas
 ANTERIORES deste usuário (sessões já encerradas).
@@ -76,20 +75,6 @@ O QUE FAZER COM O RESULTADO:
   passada, e nunca ignore um resumo que a tool trouxe.
 - A `busca` deve ser o SUBSTANTIVO do assunto, como apareceria num resumo
   ("viagem", "mercado", "relatório"), não o verbo da pergunta ("viajar").
-=======
-### FERRAMENTA: buscar_historico
-Você tem acesso à tool `buscar_historico`, que consulta resumos de conversas ANTERIORES já encerradas deste usuário.
-
-Use-a SOMENTE quando:
-- a pergunta do usuário depender de algo dito em uma conversa passada — preferências, decisões ou planos mencionados anteriormente (ex.: "qual era mesmo a meta que eu tinha combinado?", "o que eu falei sobre aquela viagem?");
-- você não conseguir responder ou decidir a rota com segurança usando apenas a conversa atual.
-
-NÃO use `buscar_historico` para:
-- dados que já estão no banco (gastos, saldos, eventos, compromissos) — isso é responsabilidade dos agentes financeiro/agenda, não sua;
-- dúvidas sobre o próprio Assessor.AI (regras, políticas, termos) — essas vão para o agente faq.
-
-Se a tool retornar algo relevante, use-a para embasar sua resposta direta ou sua decisão de rota — nunca repasse o conteúdo bruto do histórico como se fosse a resposta final.
->>>>>>> 7ae640f0e32f56f97e0857acdce105d922df7187
 
 ### PROTOCOLO DE ENCAMINHAMENTO 
 ROUTE=[financeiro|agenda|faq]
@@ -133,7 +118,6 @@ ROUTE=agenda
 PERGUNTA_ORIGINAL=[mensagem completa do usuário]
 """
 
-<<<<<<< HEAD
 ROUTER_SHOT_6 = """
 Usuário: Qual era mesmo a loja que eu te falei?
 Roteador: buscar_historico(busca="loja")
@@ -147,8 +131,6 @@ Roteador: buscar_historico(busca="curso de inglês")
 Tool: Nenhuma conversa anterior relevante encontrada.
 Roteador: Não encontrei registro disso nas nossas conversas anteriores. Quer me contar de novo?"""
 
-=======
->>>>>>> 7ae640f0e32f56f97e0857acdce105d922df7187
 ROUTER_SHOTS_CUT = (
     "FIM DOS EXEMPLOS. "
     "Considere apenas as mensagens abaixo como contexto verdadeiro."
@@ -162,11 +144,8 @@ ROUTER_PROMPT_COMPLETO = (
     ROUTER_SHOT_3      + "\n\n" +
     ROUTER_SHOT_4      + "\n\n" +
     ROUTER_SHOT_5      + "\n\n" +
-<<<<<<< HEAD
     ROUTER_SHOT_6      + "\n\n" +
     ROUTER_SHOT_7      + "\n\n" +
-=======
->>>>>>> 7ae640f0e32f56f97e0857acdce105d922df7187
     ROUTER_SHOTS_CUT
 )
 
@@ -208,7 +187,6 @@ Finanças pessoais: gastos, receitas, dívidas, orçamento, metas, investimentos
 - Responda APENAS com o JSON abaixo, sem markdown, sem texto extra.
 - Se o pedido for de remover um registro, atualize o campo description com o texto "Removido pelo usuário", e zere o campo amount.
 
-<<<<<<< HEAD
 ### MEMÓRIA DE CONVERSAS ANTERIORES
 Você tem a tool `buscar_historico`, que consulta RESUMOS de conversas ANTERIORES
 deste usuário (sessões já encerradas). Ela NÃO consulta o banco de dados.
@@ -224,8 +202,6 @@ que já está nas mensagens acima — isso é a conversa atual, não o passado.
 O resultado da tool é INSUMO, não resposta: use o conteúdo para preencher o
 JSON. NUNCA devolva o texto da tool cru, e NUNCA invente uma conversa passada.
 Se a tool não encontrar nada e isso impedir a resposta, use "esclarecer".
-=======
->>>>>>> 7ae640f0e32f56f97e0857acdce105d922df7187
 
 ### SAÍDA (JSON)
 Campos mínimos obrigatórios:
@@ -268,7 +244,6 @@ Roteador: ROUTE=financeiro
 PERGUNTA_ORIGINAL=[pergunta não relacionada a finanças ou agenda]
 Financeiro: {"dominio":"financeiro","intencao":"consultar","resposta":"Essa pergunta está fora da minha área de atuação.","recomendacao":"Posso ajudar com finanças ou agenda. O que prefere?"}"""
 
-<<<<<<< HEAD
 FINANCEIRO_SHOT_5 = """
 Roteador: ROUTE=financeiro
 PERGUNTA_ORIGINAL=[pergunta que se refere a algo combinado em outra conversa]
@@ -277,8 +252,6 @@ Tool: [12/03/2026] O usuário definiu a meta de juntar R$ 3.000 para trocar de n
 Financeiro: (consulta as tools de transactions) e responde
 {"dominio":"financeiro","intencao":"consultar","resposta":"Sua meta era juntar R$ 3.000 para o notebook; você já separou R$ 1.850.","recomendacao":"Faltam R$ 1.150 — separando R$ 290 por mês você chega em 4 meses."}"""
 
-=======
->>>>>>> 7ae640f0e32f56f97e0857acdce105d922df7187
 FINANCEIRO_SHOTS_CUT = (
     "FIM DOS EXEMPLOS. "
     "Considere apenas as mensagens abaixo como contexto verdadeiro."
@@ -291,10 +264,7 @@ FINANCEIRO_PROMPT_COMPLETO = (
     FINANCEIRO_SHOT_2      + "\n\n" +
     FINANCEIRO_SHOT_3      + "\n\n" +
     FINANCEIRO_SHOT_4      + "\n\n" +
-<<<<<<< HEAD
     FINANCEIRO_SHOT_5      + "\n\n" +
-=======
->>>>>>> 7ae640f0e32f56f97e0857acdce105d922df7187
     FINANCEIRO_SHOTS_CUT
 )
 # ==============================================================================
@@ -344,7 +314,6 @@ Campos opcionais (incluir SOMENTE se necessário):
   - janela_tempo   : {{"de":"YYYY-MM-DDTHH:MM","ate":"YYYY-MM-DDTHH:MM","rotulo":"ex.: amanhã 09:00-10:00"}}
   - evento         : {{"titulo":"...","data":"YYYY-MM-DD","inicio":"HH:MM","fim":"HH:MM","local":"...","participantes":["..."]}}
 
-<<<<<<< HEAD
 ### MEMÓRIA DE CONVERSAS ANTERIORES
 Você tem a tool `buscar_historico`, que consulta RESUMOS de conversas ANTERIORES
 deste usuário (sessões já encerradas). Ela NÃO consulta o banco de dados.
@@ -360,8 +329,6 @@ que já está nas mensagens acima — isso é a conversa atual, não o passado.
 O resultado da tool é INSUMO, não resposta: use o conteúdo para preencher o
 JSON. NUNCA devolva o texto da tool cru, e NUNCA invente uma conversa passada.
 Se a tool não encontrar nada e isso impedir a resposta, use "esclarecer".
-=======
->>>>>>> 7ae640f0e32f56f97e0857acdce105d922df7187
 """
 
 AGENDA_SHOTS_OPEN = (
@@ -390,7 +357,6 @@ Roteador: ROUTE=agenda
 PERGUNTA_ORIGINAL=[pedido de agendamento sem horário definido]
 Agenda: {"dominio":"agenda","intencao":"criar","resposta":"Preciso do horário para agendar.","recomendacao":"","esclarecer":"Qual horário você prefere em [data]?"}"""
 
-<<<<<<< HEAD
 AGENDA_SHOT_5 = """
 Roteador: ROUTE=agenda
 PERGUNTA_ORIGINAL=[pedido para agendar algo mencionado em outra conversa]
@@ -399,8 +365,6 @@ Tool: [09/08/2026] O usuário agendou uma viagem para Salvador em dezembro.
 Agenda: (usa o achado para preencher o evento)
 {"dominio":"agenda","intencao":"criar","resposta":"Encontrei a viagem para Salvador em dezembro que você mencionou.","recomendacao":"Confirmo o bloqueio da agenda para dezembro?","esclarecer":"Quais dias exatos de dezembro?"}"""
 
-=======
->>>>>>> 7ae640f0e32f56f97e0857acdce105d922df7187
 AGENDA_SHOTS_CUT = (
     "FIM DOS EXEMPLOS. "
     "Considere apenas as mensagens abaixo como contexto verdadeiro."
@@ -413,10 +377,7 @@ AGENDA_PROMPT_COMPLETO = (
     AGENDA_SHOT_2      + "\n\n" +
     AGENDA_SHOT_3      + "\n\n" +
     AGENDA_SHOT_4      + "\n\n" +
-<<<<<<< HEAD
     AGENDA_SHOT_5          + "\n\n" +
-=======
->>>>>>> 7ae640f0e32f56f97e0857acdce105d922df7187
     AGENDA_SHOTS_CUT
 )
 
@@ -520,14 +481,9 @@ no conteúdo do FAQ oficial.
 ### REGRAS
 - SEMPRE chame a tool 'faq_retriever' passando o teste de PERGUNTA_ORIGINAL antes de responder.
 - Responda SOMENTE com base no retorno da tool. Nunca use conhecimento próprio
-<<<<<<< HEAD
 - Se a tool NÃO retornar informação relevante, responda exatamente:
   - "Não encontrei essa informação no FAQ do sistema."
 - Caso a tool retorne informação relevante, responda com base nela, de forma clara e objetiva.
-=======
-- Se a tool retornar informação relevante, responda exatamente:
-  - "Não encontrei essa informação no FAQ do sistema."
->>>>>>> 7ae640f0e32f56f97e0857acdce105d922df7187
 - Seja claro, objetivo e use linguagem acessível
 - Responda sempre em português do Brasil
 - NÂO mencione que está consultando um arquivo ou nanco vetorial.
