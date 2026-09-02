@@ -1,131 +1,13 @@
-<<<<<<< HEAD
-from fastapi import FastAPI
-from app.routes.chat import router as router_chat
-from fastapi.middleware.cors import CORSMiddleware
-from app.config import FRONTEND_DIR
-from fastapi.staticfiles import StaticFiles
-from app.config import validar_config          # junto dos outros imports
-from app.routes import chat, sessions
-
-for _problema in validar_config():                 # logo antes de app = FastAPI(...)
-    print(f"[config] ATENÇÃO: {_problema}")
-
-app = FastAPI(
-    title="Assessor IA",
-    description="Assesor financeiro e de agenda com LangChain e LangGraph",
-    version="0.1.0",
-)
-
-@app.get("/health")
-def health() -> dict:
-    """Responde 'ok' se o servidor subiu"""
-    problemas = validar_config()
-    return {
-        "status": "ok" if not problemas else "atencao",
-        "problemas_de_configuracao": problemas,
-    }
-
-app.include_router(router_chat)
-app.include_router(chat.router)
-app.include_router(sessions.router)    
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"]
-)
-
-if (FRONTEND_DIR / "index.html").exists():
-    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
-else:
-    @app.get("/")
-    def raiz() -> dict:
-        return {
-            "status": "ok",
-            "mensagem": "Acessor IA está rodando, mas o frontend não foi encontrado. Por favor, verifique a instalação do frontend.",
-        }
-=======
 import operator
 from typing import Annotated, TypedDict
-from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
-
-import os
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.agents import create_agent
-from langchain_groq import ChatGroq
 from langgraph.checkpoint.memory import MemorySaver
-from tools.pg_tools import TOOLS
-from tools.faq_tools import faq_retriever
-from prompts import (
-    ROUTER_PROMPT_COMPLETO,
-    FINANCEIRO_PROMPT_COMPLETO,
-    AGENDA_PROMPT_COMPLETO,
-    ORQUESTRADOR_PROMPT_COMPLETO,
-    FAQ_PROMPT,
-)
-
-from guardrail import guardrail_entrada, guardrail_saida, anonimizar_entrada
-from memory_mongodb import iniciar_sessao, salvar_mensagem, encerrar_sessao
-from langchain_core.messages import RemoveMessage
-from tools.memory_tools import TOOLS_MEMORIA
-
-load_dotenv()
-
-# ==============================================================================
-# MODELOS E AGENTES  (sem checkpointer — a memória fica no grafo)
-# ==============================================================================
-llm_gemini = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    temperature=0.7,
-    top_p=0.95,
-    api_key=os.getenv("GEMINI_API_KEY"),
-)
-
-llm_groq = ChatGroq(
-    model="openai/gpt-oss-120b",
-    temperature=0.7,
-    api_key=os.getenv("GROQ_API_KEY"),
-)
-
-llm_especialista = llm_gemini.with_fallbacks([llm_groq])
-
-llm_rapido = ChatGroq(
-    model="llama-3.3-70b-versatile",
-    temperature=0.0,
-    api_key=os.getenv("GROQ_API_KEY"),
-)
-
-router_app = create_agent(
-    model=llm_rapido,
-    tools=TOOLS_MEMORIA,
-    system_prompt=ROUTER_PROMPT_COMPLETO,
-)
-
-financeiro_app = create_agent(
-    model=llm_especialista,
-    tools=TOOLS,
-    system_prompt=FINANCEIRO_PROMPT_COMPLETO,
-)
-
-agenda_app = create_agent(
-    model=llm_especialista,
-    system_prompt=AGENDA_PROMPT_COMPLETO,
-)
-
-orquestrador_app = create_agent(
-    model=llm_rapido,
-    system_prompt=ORQUESTRADOR_PROMPT_COMPLETO,
-)
-
-faq_app = create_agent(
-    model=llm_rapido,
-    tools=[faq_retriever],
-    system_prompt=FAQ_PROMPT,
-)
-
+from langgraph.graph.message import add_messages
+from langchain_core.runnables import RunnableConfig          # ← novo
+from app.guardrail import guardrail_entrada, guardrail_saida, anonimizar_entrada
+from app.memory import iniciar_sessao, salvar_mensagem, encerrar_sessao
+# from langchain_core.messages import RemoveMessage
+from app.agents import router_app, financeiro_app, agenda_app, orquestrador_app, faq_app
 
 # ==============================================================================
 # ESTADO
@@ -138,16 +20,13 @@ class Estado(TypedDict):
     resposta_final:     str                                  # resposta para o usuário
     rota: str
     mapa_pii: dict
-
+    messages:            Annotated[list, add_messages]        # histórico usado pelo roteador
 
 # ==============================================================================
 # NÓS
 # ==============================================================================
-def no_roteador(estado: Estado) -> dict:
-    saida = router_app.invoke(
-        {"messages": [{"role": "human", "content": estado["input"]}]},
-        config={"configurable": {"thread_id": estado["session_id"]}},
-    )
+def no_roteador(estado: Estado, config: RunnableConfig) -> dict:
+    saida = router_app.invoke({"messages": list(estado["messages"])}, config=config)
     texto = saida["messages"][-1].text
 
     # Resposta direta (saudação, fora de escopo): já escreve no campo final
@@ -157,15 +36,21 @@ def no_roteador(estado: Estado) -> dict:
             "resposta_final":   texto,
         }
 
-    # Encaminhamento: sobrescreve input com o protocolo para o especialista
+    # Encaminhamento: extrai a rota da 1ª linha do protocolo (ex.: "ROUTE=financeiro")
+    # e sobrescreve input com o protocolo para o especialista
+    primeira_linha = texto.strip().splitlines()[0]
+    rota = primeira_linha.split("=", 1)[1].strip().lower()
+
     return {
         "input":            texto,
+        "rota":             rota,
         "agentes_chamados": ["roteador"],
     }
 
 def no_orquestrador(estado: Estado) -> dict:
+    json_especialista = estado["messages"][-1].text
     saida = orquestrador_app.invoke(
-        {"messages": [{"role": "human", "content": estado["saida_especialista"]}]},
+        {"messages": [{"role": "human", "content": json_especialista}]},
         config={"configurable": {"thread_id": estado['session_id']}},
     )
     return {
@@ -195,18 +80,20 @@ def no_guardrail_entrada(estado: Estado) -> dict:
         "rota": "roteador",
         "mapa_pii": mapa,
         "input": texto_anon,
+        "messages": [{"role": "human", "content": texto_anon}],
     }
 
 def no_guardrail_saida(estado: Estado) -> dict:
     ultima = ""
     for msg in reversed(estado["messages"]):
-        if msg.type == "ai" and msg.content:
-            ultima = msg.content
+        if msg.type == "ai" and msg.text:
+            ultima = msg.text
             break
 
     resultado = guardrail_saida(ultima, estado.get("mapa_pii", {}))
     return {
         "messages":[{"role":"assistant", "content":resultado["conteudo"]}],
+        "resposta_final":  resultado["conteudo"],
         "agentes_chamados": ["guardrail_saida"],
     }
 
@@ -262,7 +149,7 @@ grafo.add_edge("financeiro",   "orquestrador")
 grafo.add_edge("agenda",       "orquestrador")
 grafo.add_edge("orquestrador", "guardrail_saida")
 grafo.add_edge("guardrail_saida", END)
-grafo.add_edge("faq",          END)   # FAQ bypassa o orquestrador
+grafo.add_edge("faq",          "guardrail_saida")   # FAQ bypassa o orquestrador
 
 # Memória centralizada no grafo — persiste o Estado inteiro entre turns
 memory = MemorySaver()
@@ -279,6 +166,7 @@ def executar_fluxo_assessor(pergunta_usuario: str, session_id: str) -> str:
         "agentes_chamados":   [],
         "saida_especialista": "",
         "resposta_final":     "",
+        "messages":           [],
     }
 
     estado_final = fluxo_agentes.invoke(    
@@ -292,24 +180,24 @@ def executar_fluxo_assessor(pergunta_usuario: str, session_id: str) -> str:
 # ==============================================================================
 # LOOP DE CONVERSA
 # ==============================================================================
-session_id = "id_usuario"
-iniciar_sessao(session_id)
+# session_id fixo removido: cada sessão agora é criada sob demanda em
+# salvar_mensagem() (app/memory.py), no primeiro turno de cada session_id
+# real vindo do frontend.
 
-while True:
-    try:
-        user_input = input("> ")
-        if user_input.lower() in ("sair", "end", "fim", "tchau", "bye"):
-            encerrar_sessao(session_id)
-            print("Encerrando a conversa.")
-            break
+# while True:
+#     try:
+#         user_input = input("> ")
+#         if user_input.lo wer() in ("sair", "end", "fim", "tchau", "bye"):
+#             encerrar_sessao(session_id)
+#             print("Encerrando a conversa.")
+#             break
 
-        resposta = executar_fluxo_assessor(
-            pergunta_usuario=user_input,
-            session_id=session_id,
-        )
-        print(resposta)
+#         resposta = executar_fluxo_assessor(
+#             pergunta_usuario=user_input,
+#             session_id=session_id,
+#         )
+#         print(resposta)
 
-    except Exception as e:
-        print("Erro ao consumir a API:", e)
-        continue
->>>>>>> 7ae640f0e32f56f97e0857acdce105d922df7187
+#     except Exception as e:
+#         print("Erro ao consumir a API:", e)
+#         continue

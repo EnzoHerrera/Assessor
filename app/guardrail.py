@@ -4,19 +4,9 @@ Verificações de segurança e compliance do assessor financeiro.
 ENTRADA  → anonimizar → checar injeção → checar dados internos → classificar (LLM)
 SAÍDA    → redigir PII → desanonimizar → revisar compliance (LLM)
 """
-import os
 import re
 import uuid
-from dotenv import load_dotenv
-from langchain_groq import ChatGroq
-
-load_dotenv()
-
-llm = ChatGroq(
-    model="llama-3.3-70b-versatile", 
-    temperature=0.0, 
-    api_key=os.getenv("GROQ_API_KEY")
-)
+from app.llms import llm_rapido as llm
 
 # ==============================================================================
 # PII — padrões usados tanto na entrada quanto na saída
