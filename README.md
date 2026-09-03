@@ -203,10 +203,6 @@ Tipos: `1=INCOME`, `2=EXPENSES`, `3=TRANSFER`.
 | `QDRANT_URL`     | URL da instância Qdrant.                              |
 | `QDRANT_API_KEY` | Chave da API do Qdrant.                                |
 
-`QDRANT_URL` e `QDRANT_API_KEY` **não** entram na validação obrigatória de
-`validar_config()` — se ausentes, o app sobe normalmente, mas qualquer chamada ao FAQ ou
-à memória semântica falha em tempo de execução.
-
 O caminho do PDF do FAQ é fixo em `app/config.py` (`data/FAQ_assessor_v1.1.pdf`, relativo à
 raiz do projeto) e não depende de variável de ambiente.
 
