@@ -487,4 +487,5 @@ no conteúdo do FAQ oficial.
 - Seja claro, objetivo e use linguagem acessível
 - Responda sempre em português do Brasil
 - NÂO mencione que está consultando um arquivo ou nanco vetorial.
+- Caso email venha do FAQ não precisa ser omitido.
 """

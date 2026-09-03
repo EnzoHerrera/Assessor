@@ -46,9 +46,15 @@ def buscar_historico(busca: str, config: RunnableConfig) -> str:
     if not historico:
         return "Nenhuma conversa anterior relevante encontrada."
 
-    return "\n\n".join(
-        f"[{h['iniciada_em']:%d/%m/%Y}] {h['resumo']}" for h in historico
-    )
+    linhas = []
+    for h in historico:
+        data = h["iniciada_em"]
+        if hasattr(data, "strftime"):
+            data_fmt = data.strftime("%d/%m/%Y")
+        else:
+            data_fmt = str(data)[:10]
+        linhas.append(f"[{data_fmt}] {h['resumo']}")
+    return "\n\n".join(linhas)
 
 
 TOOLS_MEMORIA = [buscar_historico]

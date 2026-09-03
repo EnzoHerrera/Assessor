@@ -159,7 +159,7 @@ fluxo_agentes = grafo.compile(checkpointer=memory)
 # ==============================================================================
 # FLUXO PRINCIPAL
 # ==============================================================================
-def executar_fluxo_assessor(pergunta_usuario: str, session_id: str) -> str:
+def executar_fluxo_assessor(pergunta_usuario: str, session_id: str, user_id: str = "usuario_teste") -> str:
     estado_inicial = {
         "input":              pergunta_usuario,
         "session_id":         session_id,
@@ -171,11 +171,15 @@ def executar_fluxo_assessor(pergunta_usuario: str, session_id: str) -> str:
 
     estado_final = fluxo_agentes.invoke(    
         estado_inicial,
-        config={"configurable": {"thread_id": session_id}},
+        config={"configurable": {"thread_id": session_id, "user_id": user_id}},
     )
 
-    print(f"[debug] agentes chamados: {estado_final['agentes_chamados']}")
-    return estado_final["resposta_final"]
+    resposta = estado_final["messages"][-1].text
+
+    salvar_mensagem(session_id, "human", pergunta_usuario, user_id=user_id)
+    salvar_mensagem(session_id, "assistant", resposta, user_id=user_id)
+
+    return resposta
 
 # ==============================================================================
 # LOOP DE CONVERSA

@@ -7,6 +7,6 @@ from app.graph import executar_fluxo_assessor
 def conversar(requisicao: ChatRequest) -> ChatResponse:
     resposta = executar_fluxo_assessor(
         pergunta_usuario=requisicao.pergunta,
-        session_id=requisicao.session_id
+        session_id=requisicao.session_id,
     )
     return ChatResponse(resposta=resposta)

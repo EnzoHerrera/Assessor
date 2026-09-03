@@ -32,6 +32,8 @@ from datetime import datetime, timezone
 from app.llms import llm_rapido
 from app.config import MONGODB_URI
 
+from qdrant_client import models
+from app.qdrant import qdrant, gerar_embedding, COLLECTION_MEMORIA
 from langchain_groq import ChatGroq
 from pymongo import MongoClient
 
@@ -117,7 +119,7 @@ def _doc_id_da_sessao(session_id: str) -> str | None:
     return doc["_id"]
 
 
-def iniciar_sessao(session_id: str) -> None: # se o session_id for int tem que mudar aqui
+def iniciar_sessao(session_id: str, user_id: str = "usuario_teste") -> None: # se o session_id for int tem que mudar aqui
     """
     Cria um novo documento de sessão no MongoDB.
     O doc_id (UUID) é gerado aqui e guardado em _sessoes_ativas.
@@ -128,6 +130,7 @@ def iniciar_sessao(session_id: str) -> None: # se o session_id for int tem que m
     col_sessoes.insert_one({
         "_id":           doc_id,
         "session_id":    session_id,
+        "user_id":       user_id,
         "iniciada_em":   agora,
         "atualizada_em": agora,
         "resumo":        "",
@@ -137,7 +140,7 @@ def iniciar_sessao(session_id: str) -> None: # se o session_id for int tem que m
     _sessoes_ativas[session_id] = doc_id
 
 
-def salvar_mensagem(session_id: str, role: str, content: str) -> None:
+def salvar_mensagem(session_id: str, role: str, content: str, user_id: str = "usuario_teste") -> None:
     """ Adiciona uma mensagem ao array de mensagens da sessão ativa.
 
     Cria a sessão sob demanda se ainda não estiver registrada em
@@ -146,7 +149,7 @@ def salvar_mensagem(session_id: str, role: str, content: str) -> None:
     """
     doc_id = _doc_id_da_sessao(session_id)
     if doc_id is None:
-        iniciar_sessao(session_id)
+        iniciar_sessao(session_id, user_id=user_id)
         doc_id = _sessoes_ativas[session_id]
 
     col_sessoes.update_one(
@@ -191,41 +194,65 @@ def encerrar_sessao(session_id) -> str:
             }
         },
     )
+    # Salva o embedding do resumo no Qdrant para busca semântica futura.
+    # O filtro de multitenancy usa user_id (estável entre sessões), não session_id.
+    user_id = doc.get("user_id", "usuario_teste")
+    vetor = gerar_embedding(resumo)
+    qdrant.upsert(
+        collection_name=COLLECTION_MEMORIA,
+        points=[
+            models.PointStruct(
+                id=doc_id,
+                vector=vetor,
+                payload={
+                    "user_id":     user_id,
+                    "session_id":  session_id,
+                    "resumo":      resumo,
+                    "iniciada_em": doc["iniciada_em"].isoformat(),
+                },
+            )
+        ],
+    )
     _sessoes_ativas.pop(session_id, None)
     return resumo
 
 
-def recuperar_historico(session_id: str, busca: str = "", limite: int = 3) -> list[dict]:
-    """
-    Recupera resumos de sessões ANTERIORES (já encerradas) de um usuário.
-
-    Estratégia: olha primeiro os resumos. Se houver termo de busca, filtra
-    por ele; senão, traz as sessões mais recentes. As mensagens completas
-    NÃO vêm aqui — para isso use recuperar_mensagens(doc_id).
-
-    session_id : identifica o usuário (hoje fixo, depois dinâmico)
-    busca      : termo opcional para filtrar resumos relevantes
-    limite     : máximo de sessões retornadas (mais recentes primeiro)
-    """
-    # só sessões DESTE usuário que já têm resumo (= já encerradas).
-    # O $nin descarta a sessão em andamento, cujo resumo ainda está vazio —
-    # sem ele a tool devolveria a própria conversa atual como se fosse passado.
-    filtro = {"session_id": session_id, "resumo": {"$nin": ["", None]}}
-
-    # se houver termo de busca, filtra resumos que o contenham (case-insensitive).
-    # Acrescenta ao filtro existente em vez de substituí-lo, senão o $nin acima
-    # se perderia e a sessão atual voltaria para o resultado.
+def recuperar_historico(user_id: str, busca: str = "", limite: int = 3) -> list[dict]:
     if busca:
-        filtro["resumo"]["$regex"]   = busca
-        filtro["resumo"]["$options"] = "i"
+        vetor = gerar_embedding(busca)
+        resultados = qdrant.query_points(
+            collection_name=COLLECTION_MEMORIA,
+            query=vetor,
+            query_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="user_id",
+                        match=models.MatchValue(value=user_id),
+                    )
+                ]
+            ),
+            limit=limite,
+        )
 
+        if resultados.points:
+            return [
+                {
+                    "doc_id":      ponto.id,
+                    "iniciada_em": ponto.payload.get("iniciada_em", ""),
+                    "resumo":      ponto.payload["resumo"],
+                }
+                for ponto in resultados.points
+            ]
+
+    filtro = {"user_id": user_id, "resumo": {"$nin": ["", None]}}
     docs = (
         col_sessoes
-        .find(filtro, {"resumo": 1, "iniciada_em": 1})  # projeção: sem mensagens
-        .sort("iniciada_em", -1)                          # mais recentes primeiro
+        .find(filtro, {"resumo": 1, "iniciada_em": 1})
+        .sort("iniciada_em", -1)
         .limit(limite)
     )
 
+    # Quero adicionar um fallback para o mongo
     return [
         {"doc_id": d["_id"], "iniciada_em": d["iniciada_em"], "resumo": d["resumo"]}
         for d in docs
