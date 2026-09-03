@@ -7,8 +7,9 @@ exposto via **FastAPI** e consumido por um front-end estático simples.
 O assistente recebe uma mensagem do usuário, valida a entrada (guardrail), decide para
 qual especialista encaminhar (roteador), executa a tarefa (financeiro / agenda / FAQ),
 consolida a resposta (orquestrador), valida a saída (guardrail) e devolve o texto final
-ao usuário. A memória de longo prazo (resumos de sessões encerradas) fica no MongoDB,
-os dados financeiros ficam no PostgreSQL, e a memória de curto prazo do fluxo fica no
+ao usuário. A conversa completa (texto bruto) e os resumos de sessão ficam no MongoDB,
+os dados financeiros ficam no PostgreSQL, a busca semântica (FAQ e memória de longo
+prazo) roda sobre embeddings no Qdrant, e a memória de curto prazo do fluxo fica no
 checkpointer do LangGraph.
 
 ---
@@ -50,19 +51,37 @@ Roteador ──► Financeiro ──┐
 
 ### Memória
 
-- **Longo prazo:** MongoDB (`app/memory.py`) — um documento por sessão, com o array de
-  mensagens e um resumo gerado por LLM quando a sessão é explicitamente encerrada
-  (`POST /sessions/{session_id}/encerrar`). Só sessões com resumo entram na busca de
-  histórico (`recuperar_historico`).
+- **Longo prazo (bruta):** MongoDB (`app/memory.py`) — um documento por sessão, com o
+  array de mensagens e um resumo gerado por LLM quando a sessão é explicitamente
+  encerrada (`POST /sessions/{session_id}/encerrar`).
+- **Longo prazo (semântica):** Qdrant, coleção `memoria_resumos` — ao encerrar a sessão,
+  o resumo também é convertido em embedding e indexado lá, com `user_id` no payload para
+  isolar os resumos por usuário. A tool `buscar_historico` faz busca por similaridade
+  nessa coleção (com *fallback* para o Mongo, filtrando por `resumo` não vazio, quando não
+  há termo de busca).
 - **Fluxo (curto prazo):** `MemorySaver` do LangGraph — persiste o estado do grafo entre
   os turnos de uma mesma sessão (`thread_id` = `session_id`).
 
+`user_id` é o identificador **estável** do usuário entre sessões (o `session_id` muda a
+cada "nova sessão" no front); é ele que amarra os resumos de conversas diferentes à mesma
+pessoa. Hoje o `ChatRequest` aceita `user_id` com padrão `"usuario_teste"`.
+
 ### RAG (FAQ)
 
-O agente FAQ usa a tool `faq_retriever` (`app/tools/faq.py`): carrega o PDF a cada chamada,
-divide em chunks (`RecursiveCharacterTextSplitter`), gera embeddings
-(`GoogleGenerativeAIEmbeddings`) e busca os trechos mais relevantes num índice FAISS
-montado na hora.
+O conteúdo do PDF é **pré-indexado** no Qdrant, coleção `faq_chunks`, pelo script
+`app/ingest_faq.py` — ele carrega o PDF, divide em chunks
+(`RecursiveCharacterTextSplitter`), gera embeddings (`GoogleGenerativeAIEmbeddings`,
+`gemini-embedding-2-preview`, 768d) e faz upsert em lote no Qdrant. Deve ser rodado uma
+vez (ou sempre que o PDF mudar):
+
+```bash
+python -m app.ingest_faq
+```
+
+Em tempo de execução, a tool `faq_retriever` (`app/tools/faq.py`) só gera o embedding da
+pergunta e consulta os 6 pontos mais próximos na coleção já indexada — nada de PDF é lido
+nem re-indexado a cada chamada. O cliente Qdrant e a função de embedding ficam
+centralizados em `app/qdrant.py` (mesmo modelo de embedding usado pela memória semântica).
 
 ---
 
@@ -88,15 +107,17 @@ migracao_fastAPI/
 │   ├── prompts.py                # prompts de sistema e few-shots de cada agente
 │   ├── guardrail.py              # guardrails de entrada e saída + anonimização de PII
 │   ├── graph.py                  # define o Estado e monta o grafo (LangGraph)
-│   ├── memory.py                 # memória de longo prazo (sessões e resumos no MongoDB)
+│   ├── memory.py                 # memória de longo prazo (sessões no MongoDB + resumos no Qdrant)
+│   ├── qdrant.py                 # cliente Qdrant e geração de embeddings (compartilhado)
+│   ├── ingest_faq.py             # script de indexação do PDF do FAQ no Qdrant (rodar 1x)
 │   ├── routes/
 │   │   ├── chat.py                # POST /chat
 │   │   └── sessions.py            # POST /sessions/{id}/iniciar e /encerrar
 │   └── tools/
 │       ├── db.py                  # conexão com o PostgreSQL (psycopg2)
 │       ├── financeiro.py          # tools de transações no PostgreSQL
-│       ├── faq.py                 # tool de RAG sobre o PDF do FAQ
-│       └── mongo.py               # tool para consultar conversas anteriores (MongoDB)
+│       ├── faq.py                 # tool de RAG sobre o PDF do FAQ (consulta o Qdrant já indexado)
+│       └── mongo.py               # tool para consultar conversas anteriores (busca semântica)
 └── aulas/                        # estudos e protótipos (aula01–aula06), sem relação com a API
 ```
 
@@ -116,11 +137,19 @@ migracao_fastAPI/
 
 ```json
 // request
-{ "session_id": "uuid-do-navegador", "pergunta": "gastei 50 reais no mercado" }
+{
+  "session_id": "uuid-do-navegador",
+  "user_id": "usuario_teste",
+  "pergunta": "gastei 50 reais no mercado"
+}
 
 // response
 { "resposta": "- Lancei R$ 50,00 em 'comida' hoje.\n- *Recomendação*: ..." }
 ```
+
+`user_id` é opcional (padrão `"usuario_teste"`) e identifica o usuário de forma estável
+entre sessões — é o que a busca semântica de histórico usa para isolar os resumos de cada
+pessoa no Qdrant.
 
 ### `POST /sessions/{session_id}/encerrar`
 
@@ -167,10 +196,16 @@ Tipos: `1=INCOME`, `2=EXPENSES`, `3=TRANSFER`.
 
 | Variável         | Descrição                                            |
 | ---------------- | ----------------------------------------------------- |
-| `GEMINI_API_KEY` | Chave da API do Google Gemini.                        |
+| `GEMINI_API_KEY` | Chave da API do Google Gemini (LLMs e embeddings).     |
 | `GROQ_API_KEY`   | Chave da API da Groq.                                 |
 | `DATABASE_URL`   | String de conexão do PostgreSQL.                      |
 | `MONGODB_URI`    | String de conexão do MongoDB.                         |
+| `QDRANT_URL`     | URL da instância Qdrant.                              |
+| `QDRANT_API_KEY` | Chave da API do Qdrant.                                |
+
+`QDRANT_URL` e `QDRANT_API_KEY` **não** entram na validação obrigatória de
+`validar_config()` — se ausentes, o app sobe normalmente, mas qualquer chamada ao FAQ ou
+à memória semântica falha em tempo de execução.
 
 O caminho do PDF do FAQ é fixo em `app/config.py` (`data/FAQ_assessor_v1.1.pdf`, relativo à
 raiz do projeto) e não depende de variável de ambiente.
@@ -187,10 +222,19 @@ Pré-requisitos:
 - PostgreSQL acessível via `DATABASE_URL` (com as tabelas `transactions`, `transaction_types`
   e `categories`)
 - MongoDB acessível via `MONGODB_URI`
+- Qdrant acessível via `QDRANT_URL` / `QDRANT_API_KEY`, com as coleções `faq_chunks` e
+  `memoria_resumos` já criadas (768 dimensões, mesma dimensão do embedding
+  `gemini-embedding-2-preview`) — o código faz `upsert`/`query` nelas, mas não as cria.
 - Um arquivo `.env` na raiz com as variáveis acima preenchidas
 
 Frameworks principais: `fastapi`, `uvicorn`, `langchain`, `langgraph`, `langchain-google-genai`,
-`langchain-groq`, `langchain-community`, `psycopg2`, `pymongo`, `faiss`, `python-dotenv`.
+`langchain-groq`, `langchain-community`, `psycopg2`, `pymongo`, `qdrant-client`, `python-dotenv`.
+
+Primeiro uso (indexa o PDF do FAQ no Qdrant — repita sempre que o PDF mudar):
+
+```bash
+python -m app.ingest_faq
+```
 
 Subindo a API:
 
