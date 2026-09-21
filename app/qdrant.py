@@ -17,6 +17,7 @@ qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
 
 COLLECTION_MEMORIA = "memoria_resumos"
 COLLECTION_FAQ     = "faq_chunks"
+COLLECTION_PERFIL  = "perfil_restricoes"
 EMBEDDING_DIM      = 768
 
 _embeddings = GoogleGenerativeAIEmbeddings(

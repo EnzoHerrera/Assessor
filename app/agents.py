@@ -2,6 +2,7 @@ from langchain.agents import create_agent
 from app.tools.financeiro import TOOLS
 from app.tools.faq import faq_retriever
 from app.tools.mongo import TOOLS_MEMORIA
+from app.tools.perfil import TOOLS_PERFIL
 from app.llms import llm_rapido, llm_especialista
 
 from app.prompts import (
@@ -20,7 +21,7 @@ router_app = create_agent(
 
 financeiro_app = create_agent(
     model=llm_especialista,
-    tools=TOOLS,
+    tools=TOOLS+TOOLS_PERFIL,
     system_prompt=FINANCEIRO_PROMPT_COMPLETO,
 )
 

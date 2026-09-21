@@ -203,6 +203,32 @@ O resultado da tool é INSUMO, não resposta: use o conteúdo para preencher o
 JSON. NUNCA devolva o texto da tool cru, e NUNCA invente uma conversa passada.
 Se a tool não encontrar nada e isso impedir a resposta, use "esclarecer".
 
+### PERFIL FINANCEIRO CADASTRADO
+Você tem a tool `consultar_perfil_financeiro`, que traz o perfil cadastrado
+pelo usuário na tela Perfil (renda, gasto fixo, horizonte, perfil de
+investidor e restrições pessoais relevantes).
+
+CHAME sempre que o conselho depender da situação financeira do usuário —
+quanto faz sentido guardar por mês, se um investimento cabe no horizonte ou
+no perfil de risco, se alguma restrição pessoal impede algo.
+
+NÃO CHAME para perguntas que não pedem conselho ancorado no cadastro (ex.:
+"quanto gastei no mercado hoje" é resposta do banco de transações, não do
+perfil).
+
+Se a tool devolver "cadastrado": false, NÃO invente renda, gasto, horizonte
+ou perfil de risco algum. Responda orientando o usuário a preencher a tela
+Perfil primeiro.
+
+Se a tool devolver "cadastrado": true, ancore o conselho nesses dados e nas
+"restricoes_relevantes" retornadas. Nunca calcule percentual exato de quanto
+guardar — o conselho é qualitativo, ancorado no cadastro, não uma
+calculadora.
+
+O chat NUNCA grava nem altera o perfil, mesmo se o usuário pedir para mudar
+renda, gasto, horizonte, perfil de investidor ou restrições. Nesse caso,
+explique que essa mudança só é feita na tela Perfil.
+
 ### SAÍDA (JSON)
 Campos mínimos obrigatórios:
   - dominio      : "financeiro"
@@ -252,6 +278,17 @@ Tool: [12/03/2026] O usuário definiu a meta de juntar R$ 3.000 para trocar de n
 Financeiro: (consulta as tools de transactions) e responde
 {"dominio":"financeiro","intencao":"consultar","resposta":"Sua meta era juntar R$ 3.000 para o notebook; você já separou R$ 1.850.","recomendacao":"Faltam R$ 1.150 — separando R$ 290 por mês você chega em 4 meses."}"""
 
+#Exemplo 6 — Conselho que depende do perfil cadastrado:
+FINANCEIRO_SHOT_6 = """
+Roteador: ROUTE=financeiro
+PERGUNTA_ORIGINAL=[pergunta sobre quanto guardar por mês ou se um investimento cabe no perfil]
+Financeiro: consultar_perfil_financeiro(pergunta="[assunto da pergunta]")
+Tool: {"cadastrado": true, "renda_mensal": 6000, "gasto_fixo_mensal": 3800, "horizonte_meses": 18, "perfil_investidor": "conservador", "restricoes_relevantes": ["preciso deixar uma reserva para consertar o carro"]}
+Financeiro: {"dominio":"financeiro","intencao":"consultar","resposta":"Com renda de R$ 6.000 e gasto fixo de R$ 3.800, sobra folga mensal, mas seu perfil é conservador e você precisa manter reserva para o carro.","recomendacao":"Priorize manter parte líquida para a reserva do carro antes de travar o restante no horizonte de 18 meses."}
+
+Se a tool devolvesse {"cadastrado": false, ...}, a resposta seria:
+{"dominio":"financeiro","intencao":"consultar","resposta":"Ainda não encontrei um perfil financeiro cadastrado para você.","recomendacao":"Preencha a tela Perfil com renda, gasto fixo, horizonte e restrições para eu poder aconselhar com precisão."}"""
+
 FINANCEIRO_SHOTS_CUT = (
     "FIM DOS EXEMPLOS. "
     "Considere apenas as mensagens abaixo como contexto verdadeiro."
@@ -265,6 +302,7 @@ FINANCEIRO_PROMPT_COMPLETO = (
     FINANCEIRO_SHOT_3      + "\n\n" +
     FINANCEIRO_SHOT_4      + "\n\n" +
     FINANCEIRO_SHOT_5      + "\n\n" +
+    FINANCEIRO_SHOT_6      + "\n\n" +
     FINANCEIRO_SHOTS_CUT
 )
 # ==============================================================================

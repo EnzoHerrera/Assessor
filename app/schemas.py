@@ -1,4 +1,5 @@
-from pydantic import BaseModel, Field
+from typing import Literal
+from pydantic import BaseModel, Field, model_validator
 
 class ChatRequest(BaseModel):
     """O que o navegador envia no POST /chat."""
@@ -28,3 +29,19 @@ class ChatResponse(BaseModel):
 class SessionResponse(BaseModel):
     session_id: str
     resumo: str | None = None
+
+class PerfilRequest(BaseModel):
+    """Contrato fixo enviado pela tela Perfil no POST /perfil. Não renomear campos."""
+
+    user_id: str = Field(..., min_length=1)
+    renda_mensal: float = Field(..., gt=0)
+    gasto_fixo_mensal: float = Field(..., ge=0)
+    horizonte_meses: int = Field(..., ge=1, le=120)
+    perfil_investidor: Literal["conservador", "moderado", "arrojado"]
+    restricoes: list[str] = Field(..., min_length=1, max_length=5)
+
+    @model_validator(mode="after")
+    def _gasto_menor_que_renda(self) -> "PerfilRequest":
+        if self.gasto_fixo_mensal >= self.renda_mensal:
+            raise ValueError("gasto_fixo_mensal deve ser menor que renda_mensal")
+        return self
