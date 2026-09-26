@@ -1,0 +1,10 @@
+{
+    "mcpServers": {
+        "assessor-financeiro": {
+            "command": "C:\\Program Files\\Python314\\python.exe",
+            "args": [
+                "C:\\Users\\enzoribeiro-ieg\\Tech\\IA\\FastAPI\\migracao_fastAPI\\app\\mcp_server.py"
+            ]
+        }
+    }
+}
