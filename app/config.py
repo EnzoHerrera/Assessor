@@ -28,6 +28,16 @@ OBRIGATORIAS = {
     "QDRANT_API_KEY": QDRANT_API_KEY
 }
 
+GOOGLE_OAUTH_CREDENTIALS = os.getenv(
+    "GOOGLE_OAUTH_CREDENTIALS",
+    str(BASE_DIR / "gcp-oauth.keys.json"),
+)
+GOOGLE_CALENDAR_MCP_URL = os.getenv(
+    "GOOGLE_CALENDAR_MCP_URL",
+    "https://calendarmcp.googleapis.com/mcp/v1",
+)
+GOOGLE_CALENDAR_ACCESS_TOKEN = os.getenv("GOOGLE_CALENDAR_ACCESS_TOKEN")
+
 
 def validar_config() -> list[str]:
     """Devolve a lista de problemas de configuração (vazia = tudo certo)."""

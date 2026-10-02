@@ -3,6 +3,8 @@ from app.tools.financeiro import TOOLS
 from app.tools.faq import faq_retriever
 from app.tools.mongo import TOOLS_MEMORIA
 from app.tools.perfil import TOOLS_PERFIL
+from app.tools.agenda import TOOLS_AGENDA
+from app.tools.calendario_google import TOOLS_GOOGLE
 from app.llms import llm_rapido, llm_especialista
 
 from app.prompts import (
@@ -27,8 +29,8 @@ financeiro_app = create_agent(
 
 agenda_app = create_agent(
     model=llm_especialista,
+    tools=TOOLS_AGENDA + TOOLS_GOOGLE + TOOLS_MEMORIA,
     system_prompt=AGENDA_PROMPT_COMPLETO,
-    tools=TOOLS+TOOLS_MEMORIA,
 )
 
 orquestrador_app = create_agent(
