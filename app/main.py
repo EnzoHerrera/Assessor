@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import FRONTEND_DIR
 from fastapi.staticfiles import StaticFiles
 from app.config import validar_config          # junto dos outros imports
-from app.routes import chat, sessions, perfil
+from app.routes import chat, sessions, perfil, monitor
 
 for _problema in validar_config():                 # logo antes de app = FastAPI(...)
     print(f"[config] ATENÇÃO: {_problema}")
@@ -28,6 +28,7 @@ app.include_router(router_chat)
 app.include_router(chat.router)
 app.include_router(sessions.router)
 app.include_router(perfil.router)
+app.include_router(monitor.router)
 
 app.add_middleware(
     CORSMiddleware,

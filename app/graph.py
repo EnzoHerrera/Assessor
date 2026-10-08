@@ -7,6 +7,8 @@ from langchain_core.runnables import RunnableConfig          # ← novo
 from app.guardrail import guardrail_entrada, guardrail_saida, anonimizar_entrada
 from app.memory import iniciar_sessao, salvar_mensagem, encerrar_sessao
 # from langchain_core.messages import RemoveMessage
+from app.memory import salvar_mensagem
+from app.observabilidade import abrir_turno, fechar_turno, status_do_estado
 from app.agents import router_app, financeiro_app, agenda_app, orquestrador_app, faq_app
 
 # ==============================================================================
@@ -47,11 +49,11 @@ def no_roteador(estado: Estado, config: RunnableConfig) -> dict:
         "agentes_chamados": ["roteador"],
     }
 
-def no_orquestrador(estado: Estado) -> dict:
+def no_orquestrador(estado: Estado, config: RunnableConfig) -> dict:
     json_especialista = estado["messages"][-1].text
     saida = orquestrador_app.invoke(
         {"messages": [{"role": "human", "content": json_especialista}]},
-        config={"configurable": {"thread_id": estado['session_id']}},
+        config=config,
     )
     return {
         "agentes_chamados": [estado["rota"], "orquestrador"],
@@ -159,27 +161,63 @@ fluxo_agentes = grafo.compile(checkpointer=memory)
 # ==============================================================================
 # FLUXO PRINCIPAL
 # ==============================================================================
-def executar_fluxo_assessor(pergunta_usuario: str, session_id: str, user_id: str = "usuario_teste") -> str:
+# def executar_fluxo_assessor(pergunta_usuario: str, session_id: str, user_id: str = "usuario_teste") -> str:
+#     estado_inicial = {
+#         "input":              pergunta_usuario,
+#         "session_id":         session_id,
+#         "agentes_chamados":   [],
+#         "saida_especialista": "",
+#         "resposta_final":     "",
+#         "messages":           [],
+#     }
+
+#     estado_final = fluxo_agentes.invoke(    
+#         estado_inicial,
+#         config={"configurable": {"thread_id": session_id, "user_id": user_id}},
+#     )
+
+#     resposta = estado_final["messages"][-1].text
+
+#     salvar_mensagem(session_id, "human", pergunta_usuario, user_id=user_id)
+#     salvar_mensagem(session_id, "assistant", resposta, user_id=user_id)
+
+#     return resposta
+
+def executar_fluxo_assessor(
+    pergunta_usuario: str, session_id: str, user_id: str = "usuario_teste"
+) -> str:
+    pergunta_usuario_anonimizado, _ = anonimizar_entrada(pergunta_usuario)
     estado_inicial = {
-        "input":              pergunta_usuario,
-        "session_id":         session_id,
-        "agentes_chamados":   [],
-        "saida_especialista": "",
-        "resposta_final":     "",
-        "messages":           [],
+        "messages":         [{"role": "human", "content": pergunta_usuario}],
+        "agentes_chamados": [],
+        "rota":             "",
+        "mapa_pii":         {},
+        "session_id":       session_id,
+
     }
 
-    estado_final = fluxo_agentes.invoke(    
-        estado_inicial,
-        config={"configurable": {"thread_id": session_id, "user_id": user_id}},
-    )
+    # O registro abre antes do invoke e fecha no finally, inclusive quando
+    # o grafo levanta. A rota /monitor só lê o que ficou anotado.
+    turno_id = abrir_turno()
+    status = "erro"
+    rota = ""
+    try:
+        estado_final = fluxo_agentes.invoke(
+            estado_inicial,
+            config={"configurable": {"thread_id": session_id, "user_id": user_id}},
+        )
 
-    resposta = estado_final["messages"][-1].text
+        resposta = estado_final["messages"][-1].text
 
-    salvar_mensagem(session_id, "human", pergunta_usuario, user_id=user_id)
-    salvar_mensagem(session_id, "assistant", resposta, user_id=user_id)
+        # Salva no MongoDB após cada interação
+        salvar_mensagem(session_id, "human",     pergunta_usuario_anonimizado, user_id=user_id)
+        salvar_mensagem(session_id, "assistant", resposta, user_id=user_id)
 
-    return resposta
+        status = status_do_estado(estado_final)
+        rota = estado_final.get("rota") or ""
+        return resposta
+    finally:
+        fechar_turno(turno_id, session_id=session_id, rota=rota, status=status)
 
 # ==============================================================================
 # LOOP DE CONVERSA
@@ -205,3 +243,4 @@ def executar_fluxo_assessor(pergunta_usuario: str, session_id: str, user_id: str
 #     except Exception as e:
 #         print("Erro ao consumir a API:", e)
 #         continue
+
