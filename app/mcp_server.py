@@ -1,4 +1,5 @@
 import sys
+import uuid
 from pathlib import Path
 from typing import Annotated, Any, Optional
 
@@ -6,7 +7,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
@@ -17,6 +18,28 @@ from app.tools.financeiro import (
     saldo_total as _total_balance,
     update_transaction as _update_transaction,
 )
+
+from app.tools.write_staging import (
+    confirmar_escritas_pendentes,
+    encerrar_turno_escrita,
+    iniciar_turno_escrita,
+)
+
+def _escrita_imediata(tool_, args: dict) -> dict[str, Any]:
+    """Este servidor não tem juiz: cada chamada é um turno de uma escrita só, que ele mesmo confirma."""
+    turno_id = uuid.uuid4().hex
+    iniciar_turno_escrita(turno_id)
+    try:
+        preparado = tool_.invoke(args, config={"configurable": {"turn_id": turno_id}})
+        if preparado.get("status") != "pending_approval":
+            return preparado
+        confirmado = confirmar_escritas_pendentes(turno_id)
+        if confirmado["status"] != "ok":
+            return {"status": "error", "message": confirmado.get("message", "falha ao gravar")}
+        return {"status": "ok", **confirmado["results"][0]}
+    finally:
+        encerrar_turno_escrita(turno_id)
+
 
 mcp = MCPServer(
     name="assessor-financeiro",
@@ -49,7 +72,7 @@ def add_transaction(
     type_name: Annotated[Optional[str], Field(description="INCOME | EXPENSES | TRANSFER")] = None,
     category_name: Annotated[Optional[str], Field(description="Categoria em pt-BR.")] = None,
 ) -> dict[str, Any]:
-    return _add_transaction.invoke({
+    return _escrita_imediata(_add_transaction, {
         "amount": amount,
         "source_text": source_text,
         "type_name": type_name,
@@ -109,7 +132,7 @@ def update_transaction(
         "type_name": type_name, "category_name": category_name, "description": description,
         "payment_method": payment_method, "occurred_at": occurred_at,
     }
-    return _update_transaction.invoke({k: v for k, v in args.items() if v is not None})
+    return _escrita_imediata(_update_transaction, {k: v for k, v in args.items() if v is not None})
 
 
 if __name__ == "__main__":

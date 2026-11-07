@@ -1,4 +1,6 @@
+import json
 import operator
+import re
 from typing import Annotated, TypedDict
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -10,6 +12,11 @@ from app.memory import iniciar_sessao, salvar_mensagem, encerrar_sessao
 from app.memory import salvar_mensagem
 from app.observabilidade import abrir_turno, fechar_turno, status_do_estado
 from app.agents import router_app, financeiro_app, agenda_app, orquestrador_app, faq_app
+from app.juiz import no_juiz
+from app.tools.write_staging import (
+    iniciar_turno_escrita, encerrar_turno_escrita, listar_escritas_pendentes,
+    descartar_escritas_pendentes, confirmar_escritas_pendentes,
+)
 
 # ==============================================================================
 # ESTADO
@@ -22,6 +29,9 @@ class Estado(TypedDict):
     resposta_final:     str                                  # resposta para o usuário
     rota: str
     mapa_pii: dict
+    juiz_aprovou:        bool                                 # veredito do turno atual (libera a escrita)
+    resposta_validada_para_escrita: bool                      # saída do especialista coerente com a escrita pendente
+    status_turno:        str                                  # ok | erro | bloqueado (turno atual, não acumulado)
     messages:            Annotated[list, add_messages]        # histórico usado pelo roteador
 
 # ==============================================================================
@@ -49,27 +59,60 @@ def no_roteador(estado: Estado, config: RunnableConfig) -> dict:
         "agentes_chamados": ["roteador"],
     }
 
+def _extrair_json(texto: str) -> dict | None:
+    """Pega o objeto JSON da saída do especialista, mesmo cercado de markdown."""
+    achado = re.search(r"\{.*\}", texto or "", re.DOTALL)
+    if not achado:
+        return None
+    try:
+        return json.loads(achado.group(0))
+    except json.JSONDecodeError:
+        return None
+
+
 def no_orquestrador(estado: Estado, config: RunnableConfig) -> dict:
     json_especialista = estado["messages"][-1].text
+    turno_id = (config or {}).get("configurable", {}).get("turn_id")
+    pendentes = listar_escritas_pendentes(turno_id)
+
+    # Só exige saída coerente quando há escrita pendente; consultas seguem como antes.
+    coerente = True
+    if pendentes:
+        dados = _extrair_json(json_especialista)
+        dominio = "financeiro" if estado.get("rota") == "financeiro" else "agenda"
+        intencoes = {"inserir", "atualizar", "deletar"} if dominio == "financeiro" else {"criar"}
+        coerente = bool(
+            dados
+            and dados.get("dominio") == dominio
+            and dados.get("intencao") in intencoes
+            and isinstance(dados.get("resposta"), str)
+            and dados["resposta"].strip()
+            and not dados.get("esclarecer")
+            and not dados.get("acompanhamento")
+        )
+
     saida = orquestrador_app.invoke(
         {"messages": [{"role": "human", "content": json_especialista}]},
         config=config,
     )
     return {
         "agentes_chamados": [estado["rota"], "orquestrador"],
+        "resposta_validada_para_escrita": coerente,
         "messages":[{"role":"assistant", "content": saida["messages"][-1].text}],
     }
 
-def no_guardrail_entrada(estado: Estado) -> dict:
+def no_guardrail_entrada(estado: Estado, config: RunnableConfig) -> dict:
     mensagem_original = estado["input"]
     texto = mensagem_original
     texto_anon, mapa = anonimizar_entrada(texto)
     resposta = guardrail_entrada(texto_anon)
 
+    # user_id vem do contexto da requisição (config), nunca de thread_id/session_id.
     salvar_mensagem(
         session_id=estado["session_id"],
         role="usuario",
         content=texto_anon,
+        user_id=(config or {}).get("configurable", {}).get("user_id"),
     )
 
     if resposta["bloqueado"]:
@@ -77,10 +120,14 @@ def no_guardrail_entrada(estado: Estado) -> dict:
             "rota": "fim",
             "mapa_pii": mapa,
             "resposta_final": resposta["mensagem"],
+            "status_turno": "bloqueado",
         }
     return {
         "rota": "roteador",
         "mapa_pii": mapa,
+        "juiz_aprovou": False,          # nenhum veredito herdado de turno anterior
+        "resposta_validada_para_escrita": False,
+        "status_turno": "ok",
         "input": texto_anon,
         "messages": [{"role": "human", "content": texto_anon}],
     }
@@ -98,6 +145,67 @@ def no_guardrail_saida(estado: Estado) -> dict:
         "resposta_final":  resultado["conteudo"],
         "agentes_chamados": ["guardrail_saida"],
     }
+
+def no_confirmar_escritas(estado: Estado, config: RunnableConfig) -> dict:
+    """Só confirma a fila se o juiz aprovou; qualquer dúvida é fail-closed."""
+    turno_id = (config or {}).get("configurable", {}).get("turn_id")
+    pendentes = listar_escritas_pendentes(turno_id)
+    if not pendentes:
+        return {}
+
+    aprovou = (
+        estado.get("juiz_aprovou") is True
+        and estado.get("resposta_validada_para_escrita") is True
+    )
+    if not aprovou:
+        descartadas = descartar_escritas_pendentes(turno_id)
+        for item in pendentes:
+            print(f"[escrita] marker={item['marker']} status=descartada_julgamento operacao={item['operacao']}")
+        saida = {"agentes_chamados": ["escrita:descartada"]} if descartadas else {}
+        if estado.get("juiz_aprovou") is True:
+            # O juiz aprovou a frase "preparada", mas a saída era incoerente: sem esta
+            # mensagem o usuário acharia que a operação segue pendente.
+            saida["messages"] = [{"role": "assistant", "content": (
+                "Não consegui confirmar essa operação, então nada foi salvo. "
+                "Reformule o pedido com todos os dados."
+            )}]
+        return saida
+
+    resultado = confirmar_escritas_pendentes(turno_id)
+    if resultado["status"] != "ok":
+        print(f"[escrita] status=erro message={resultado.get('message', '')}")
+        return {
+            "messages": [{"role": "assistant", "content": (
+                "Não consegui confirmar a operação no banco. Nenhuma das alterações deste turno foi confirmada. "
+                "Confira os dados e tente novamente."
+            )}],
+            "agentes_chamados": ["escrita:erro"],
+            "status_turno": "erro",
+        }
+
+    google = resultado.get("google", [])
+    if resultado.get("count", 0) or google:
+        tipos = {item["operacao"] for item in resultado["results"]}
+        for item in resultado["results"]:
+            print(f"[escrita] marker={item['marker']} status=commit operacao={item['operacao']} id={item['id']}")
+        mensagens = []
+        if "add_transaction" in tipos:
+            mensagens.append("Lançamento financeiro registrado")
+        if "update_transaction" in tipos:
+            mensagens.append("Lançamento financeiro atualizado")
+        if "add_event" in tipos:
+            mensagens.append("Compromisso registrado na agenda")
+        texto = "; ".join(mensagens) + " com sucesso." if mensagens else ""
+        if google:
+            if all(g.get("status") == "ok" for g in google):
+                texto = (texto + " Evento criado no Google Calendar.").strip()
+            else:
+                texto = (texto + " Não consegui criar o evento no Google Calendar; tente novamente mais tarde.").strip()
+        return {
+            "messages": [{"role": "assistant", "content": texto}],
+            "agentes_chamados": ["escrita:confirmada"],
+        }
+    return {}
 
 # ==============================================================================
 # FUNÇÃO DE DECISÃO
@@ -125,6 +233,8 @@ grafo.add_node("agenda",       agenda_app)
 grafo.add_node("faq",          faq_app)
 grafo.add_node("orquestrador", no_orquestrador)
 grafo.add_node("guardrail_saida", no_guardrail_saida)
+grafo.add_node("juiz", no_juiz)
+grafo.add_node("confirmar_escritas", no_confirmar_escritas)
 
 grafo.set_entry_point("guardrail_entrada")
 
@@ -147,11 +257,13 @@ grafo.add_conditional_edges(
     },
 )
 
-grafo.add_edge("financeiro",   "orquestrador")
-grafo.add_edge("agenda",       "orquestrador")
-grafo.add_edge("orquestrador", "guardrail_saida")
+grafo.add_edge("financeiro",      "orquestrador")
+grafo.add_edge("agenda",          "orquestrador")
+grafo.add_edge("orquestrador",    "juiz")
+grafo.add_edge("faq",             "juiz")                 # FAQ mantém o juiz que já tinha
+grafo.add_edge("juiz",            "confirmar_escritas")   # veredito primeiro, escrita depois
+grafo.add_edge("confirmar_escritas", "guardrail_saida")
 grafo.add_edge("guardrail_saida", END)
-grafo.add_edge("faq",          "guardrail_saida")   # FAQ bypassa o orquestrador
 
 # Memória centralizada no grafo — persiste o Estado inteiro entre turns
 memory = MemorySaver()
@@ -199,12 +311,13 @@ def executar_fluxo_assessor(
     # O registro abre antes do invoke e fecha no finally, inclusive quando
     # o grafo levanta. A rota /monitor só lê o que ficou anotado.
     turno_id = abrir_turno()
+    iniciar_turno_escrita(turno_id)
     status = "erro"
     rota = ""
     try:
         estado_final = fluxo_agentes.invoke(
             estado_inicial,
-            config={"configurable": {"thread_id": session_id, "user_id": user_id}},
+            config={"configurable": {"thread_id": session_id, "user_id": user_id, "turn_id": turno_id}},
         )
 
         resposta = estado_final["messages"][-1].text
@@ -217,6 +330,9 @@ def executar_fluxo_assessor(
         rota = estado_final.get("rota") or ""
         return resposta
     finally:
+        # Se o grafo levantou antes do nó de confirmação, nenhuma intenção fica pendurada.
+        descartar_escritas_pendentes(turno_id)
+        encerrar_turno_escrita(turno_id)
         fechar_turno(turno_id, session_id=session_id, rota=rota, status=status)
 
 # ==============================================================================

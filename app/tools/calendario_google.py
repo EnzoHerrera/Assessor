@@ -20,8 +20,10 @@ from pathlib import Path
 from typing import Any, Optional
 
 from langchain.tools import tool
+from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel, Field
 
+from app.tools.write_staging import preparar_escrita
 from app.config import (
     BASE_DIR,
     GOOGLE_CALENDAR_ACCESS_TOKEN,
@@ -273,19 +275,14 @@ class AddGoogleEventArgs(BaseModel):
     description: Optional[str] = Field(default=None, description="Descrição / notas.")
 
 
-@tool("add_google_event", args_schema=AddGoogleEventArgs)
-def add_google_event(
+def criar_evento_google(
     title: str,
     start_time: str,
     end_time: Optional[str] = None,
     location: Optional[str] = None,
     description: Optional[str] = None,
 ) -> dict:
-    """
-    Cria o compromisso no Google Calendar da conta autenticada, via MCP oficial
-    da Google (HTTP). NÃO grava no Postgres — isso é papel da tool add_event.
-    Ao marcar um evento novo, chame as DUAS: primeiro add_event, depois esta.
-    """
+    """Cria de fato o evento no Google Calendar. Só o nó de confirmação do grafo chama isto."""
     fim = end_time or _fim_padrao(start_time)
     payload: dict[str, Any] = {
         "summary": title,
@@ -317,6 +314,32 @@ def add_google_event(
             "link": evento.get("htmlLink") or evento.get("html_link"),
         }
     return bruto
+
+
+@tool("add_google_event", args_schema=AddGoogleEventArgs)
+def add_google_event(
+    title: str,
+    start_time: str,
+    end_time: Optional[str] = None,
+    location: Optional[str] = None,
+    description: Optional[str] = None,
+    *,
+    config: RunnableConfig,
+) -> dict:
+    """
+    Prepara o compromisso no Google Calendar da conta autenticada. NÃO grava no
+    Postgres — isso é papel da tool add_event. O Google só é chamado no fim do
+    turno, depois da verificação da resposta (um efeito externo não se desfaz).
+    Ao marcar um evento novo, chame as DUAS: primeiro add_event, depois esta.
+    """
+    turno_id = (config or {}).get("configurable", {}).get("turn_id")
+    return preparar_escrita("add_google_event", {
+        "title": title,
+        "start_time": start_time,
+        "end_time": end_time,
+        "location": location,
+        "description": description,
+    }, turno_id)
 
 
 TOOLS_GOOGLE = [add_google_event]

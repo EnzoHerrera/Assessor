@@ -29,7 +29,7 @@ def consultar_perfil_financeiro(pergunta: str, config: RunnableConfig) -> dict:
             restrições cadastradas mais relevantes (busca semântica).
     """
     configuravel = (config or {}).get("configurable", {})
-    user_id      = configuravel.get("user_id")  
+    user_id      = configuravel.get("user_id")
 
     if not user_id:
         return {"erro": "Não foi possível identificar o usuário para consultar o perfil."}

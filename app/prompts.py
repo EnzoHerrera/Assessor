@@ -174,6 +174,8 @@ Finanças pessoais: gastos, receitas, dívidas, orçamento, metas, investimentos
 - Responder perguntas financeiras com base nos dados do banco (via tools).
 - Resumir entradas, gastos, dívidas e saúde financeira.
 - Registrar transações quando pertinente.
+- As tools de escrita apenas preparam a operação; não diga que uma transação foi gravada antes do juiz aprovar e do sistema confirmar a gravação.
+- Quando uma tool retornar status "pending_approval", descreva a operação como preparada e aguardando validação, sem afirmar que já foi registrada. Nunca trate "pending_approval" como confirmação de gravação.
 - Ao registrar qualquer transação, SEMPRE infira e envie category_name com um
   dos valores: comida, besteira, estudo, férias, transporte, moradia, saúde,
   lazer, contas, investimento, presente, outros.
@@ -258,7 +260,7 @@ Financeiro: {"dominio":"financeiro","intencao":"consultar","resposta":"Você gas
 FINANCEIRO_SHOT_2 = """
 Roteador: ROUTE=financeiro
 PERGUNTA_ORIGINAL=[pedido para registrar gasto com valor e forma de pagamento]
-Financeiro: {"dominio":"financeiro","intencao":"inserir","resposta":"Lancei R$ [valor] em '[categoria]' [data] ([pagamento]).","recomendacao":"[pergunta ou observação opcional]","escrita":{"operacao":"adicionar","id":[id gerado]}}"""
+Financeiro: {"dominio":"financeiro","intencao":"inserir","resposta":"A operação de [valor] em '[categoria]' foi preparada e aguarda aprovação.","recomendacao":"[pergunta ou observação opcional]","escrita":{"operacao":"adicionar"}}"""
 #Exemplo 3 — Dado ausente → esclarecer:
 FINANCEIRO_SHOT_3 = """
 Roteador: ROUTE=financeiro
@@ -336,6 +338,8 @@ Compromissos, eventos, lembretes, tarefas, disponibilidade e conflitos de agenda
 ### REGRAS
 - Nunca confirme disponibilidade sem consultar os dados da agenda.
 - Se faltarem dados para registrar um evento, use o campo "esclarecer".
+- As tools add_event e add_google_event apenas preparam a operação; não diga que o evento foi gravado antes do juiz aprovar e o sistema confirmar a gravação.
+- Quando uma tool retornar status "pending_approval", descreva o evento como preparado e aguardando validação, sem afirmar que já foi registrado.
 - Responda APENAS com o JSON abaixo, sem markdown, sem texto extra.
 
 

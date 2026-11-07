@@ -256,8 +256,16 @@ def fechar_turno(turno_id: str, session_id: str, rota: str, status: str) -> None
 
 
 def status_do_estado(estado: dict) -> str:
-    """Bloqueio de entrada é o sistema funcionando. Erro fica para a exceção."""
+    """Prioriza o status explícito do turno atual: o estado persiste entre turnos e
+    agentes_chamados acumula, então um rótulo antigo não pode contaminar o atual."""
+    status_turno = estado.get("status_turno")
+    if status_turno in {"ok", "erro", "bloqueado"}:
+        return status_turno
     for nome in estado.get("agentes_chamados") or []:
+        if isinstance(nome, str) and nome in {"escrita:erro", "juiz:sem_chave", "juiz:sem_resposta"}:
+            return "erro"
+        if isinstance(nome, str) and nome.startswith("juiz:erro"):
+            return "erro"
         if isinstance(nome, str) and nome.startswith("guardrail_entrada:") and nome != "guardrail_entrada:aprovado":
             return "bloqueado"
     return "ok"

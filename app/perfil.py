@@ -81,7 +81,9 @@ def buscar_perfil_estruturado(user_id: str) -> dict | None:
     return col_perfis.find_one({"_id": user_id})
 
 
-def buscar_restricoes_relevantes(user_id: str, pergunta: str, limite: int = 5) -> list[str]:
+def buscar_restricoes_relevantes(
+    user_id: str, pergunta: str, limite = 3
+) -> list[str]:
     """Busca semântica nas restrições do usuário no Qdrant."""
     vetor = gerar_embedding(pergunta)
     resultados = qdrant.query_points(

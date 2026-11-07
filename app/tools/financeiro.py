@@ -1,8 +1,10 @@
 from typing import Optional, List
 from langchain.tools import tool
+from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel, Field
 
 from app.tools.db import get_conn
+from app.tools.write_staging import preparar_escrita
 
 # Essa classe garante que o objeto de Python passe todos esses campos
 class AddTransactionArgs(BaseModel):
@@ -48,6 +50,8 @@ def _resolve_category_id(cur, category_name: Optional[str], category_id: Optiona
     return 12
 
 # Tool: add_transaction
+# Não grava: resolve tipo/categoria (só leitura) e REGISTRA a intenção no estágio
+# do turno. O INSERT acontece em app/graph.py::no_confirmar_escritas, depois do juiz.
 @tool("add_transaction", args_schema=AddTransactionArgs)
 def add_transaction(
     amount: float,
@@ -59,42 +63,30 @@ def add_transaction(
     category_id: Optional[int] = None,
     description: Optional[str] = None,
     payment_method: Optional[str] = None,
+    *,
+    config: RunnableConfig,
 ) -> dict:
-    """Insere uma transação financeira no banco de dados Postgres.""" # docstring obrigatório da @tools do langchain (estranho, mas legal né?)
+    """Prepara o registro de uma transação financeira no Postgres.
+    A gravação definitiva acontece no fim do turno, depois da verificação da resposta."""
     conn = get_conn()
     cur = conn.cursor()
     try:
         resolved_type_id = _resolve_type_id(cur, type_id, type_name)
+        if not resolved_type_id:
+            return {"status": "error", "message": "Tipo inválido (use INCOME, EXPENSES ou TRANSFER)."}
         category_id = _resolve_category_id(cur, category_name, category_id)
-        if occurred_at:
-            cur.execute(
-                """
-                INSERT INTO transactions
-                    (amount, type, category_id, description, payment_method, occurred_at, source_text)
-                VALUES
-                    (%s, %s, %s, %s, %s, %s::timestamptz, %s)
-                RETURNING id, occurred_at;
-                """,
-                (amount, resolved_type_id, category_id, description, payment_method, occurred_at, source_text),
-            )
-        else:
-            cur.execute(
-                """
-                INSERT INTO transactions
-                    (amount, type, category_id, description, payment_method, occurred_at, source_text)
-                VALUES
-                    (%s, %s, %s, %s, %s, NOW(), %s)
-                RETURNING id, occurred_at;
-                """,
-                (amount, resolved_type_id, category_id, description, payment_method, source_text),
-            )
 
-        new_id, occurred = cur.fetchone()
-        conn.commit()
-        return {"status": "ok", "id": new_id, "occurred_at": str(occurred)}
-
+        turno_id = (config or {}).get("configurable", {}).get("turn_id")
+        return preparar_escrita("add_transaction", {
+            "amount": amount,
+            "source_text": source_text,
+            "occurred_at": occurred_at,
+            "type_id": resolved_type_id,
+            "category_id": category_id,
+            "description": description,
+            "payment_method": payment_method,
+        }, turno_id)
     except Exception as e:
-        conn.rollback()
         return {"status": "error", "message": str(e)}
     finally:
         try:
@@ -229,14 +221,17 @@ def update_transaction(
     description: Optional[str] = None,
     payment_method: Optional[str] = None,
     occurred_at: Optional[str] = None,
+    *,
+    config: RunnableConfig,
 ) -> dict:
     """
-    Atualiza uma transação existente.
+    Prepara a atualização de uma transação existente (a gravação definitiva
+    acontece no fim do turno, depois da verificação da resposta).
     Estratégias:
       - Se 'id' for informado: atualiza diretamente por ID.
       - Caso contrário: localiza a transação mais recente que combine (match_text em source_text/description)
         E (date_local em America/Sao_Paulo), então atualiza.
-    Retorna: status, rows_affected, id, e o registro atualizado.
+    Retorna: status pending_approval, id alvo, registro atual e as alterações preparadas.
     """
     if not any([amount, type_id, type_name, category_id, category_name, description, payment_method, occurred_at]):
         return {"status": "error", "message": "Nada para atualizar: forneça pelo menos um campo (amount, type, category, description, payment_method, occurred_at)."}
@@ -273,46 +268,11 @@ def update_transaction(
         if category_name and not category_id:
             resolved_category_id = _resolve_category_id(cur, category_name)
 
-        # Montar SET dinâmico
-        sets = []
-        params: List[object] = []
-        if amount is not None:
-            sets.append("amount = %s")
-            params.append(amount)
-        if resolved_type_id is not None:
-            sets.append("type = %s")
-            params.append(resolved_type_id)
-        if resolved_category_id is not None:
-            sets.append("category_id = %s")
-            params.append(resolved_category_id)
-        if description is not None:
-            sets.append("description = %s")
-            params.append(description)
-        if payment_method is not None:
-            sets.append("payment_method = %s")
-            params.append(payment_method)
-        if occurred_at is not None:
-            sets.append("occurred_at = %s::timestamptz")
-            params.append(occurred_at)
-
-        if not sets:
-            return {"status": "error", "message": "Nenhum campo válido para atualizar."}
-
-        params.append(target_id)
-
-        cur.execute(
-            f"UPDATE transactions SET {', '.join(sets)} WHERE id = %s;",
-            params
-        )
-        rows_affected = cur.rowcount
-        conn.commit()
-
-        # Retornar o registro atualizado
+        # Registro atual (só leitura): garante que o alvo existe e serve de evidência
         cur.execute(
             """
-            SELECT
-              t.id, t.occurred_at, t.amount, tt.type AS type_name,
-              c.name AS category_name, t.description, t.payment_method, t.source_text
+            SELECT t.id, t.occurred_at, t.amount, tt.type AS type_name,
+                   c.name AS category_name, t.description, t.payment_method
             FROM transactions t
             JOIN transaction_types tt ON tt.id = t.type
             LEFT JOIN categories c ON c.id = t.category_id
@@ -321,28 +281,28 @@ def update_transaction(
             (target_id,)
         )
         r = cur.fetchone()
-        updated = None
-        if r:
-            updated = {
-                "id": r[0],
-                "occurred_at": str(r[1]),
-                "amount": float(r[2]),
-                "type": r[3],
-                "category": r[4],
-                "description": r[5],
-                "payment_method": r[6],
-                "source_text": r[7],
-            }
-
-        return {
-            "status": "ok",
-            "rows_affected": rows_affected,
-            "id": target_id,
-            "updated": updated
+        if not r:
+            return {"status": "error", "message": f"Transação {target_id} não encontrada."}
+        atual = {
+            "id": r[0], "occurred_at": str(r[1]), "amount": float(r[2]), "type": r[3],
+            "category": r[4], "description": r[5], "payment_method": r[6],
         }
 
+        turno_id = (config or {}).get("configurable", {}).get("turn_id")
+        retorno = preparar_escrita("update_transaction", {
+            "target_id": target_id,
+            "amount": amount,
+            "type_id": resolved_type_id,
+            "category_id": resolved_category_id,
+            "description": description,
+            "payment_method": payment_method,
+            "occurred_at": occurred_at,
+        }, turno_id)
+        if retorno.get("status") == "pending_approval":
+            retorno["registro_atual"] = atual
+        return retorno
+
     except Exception as e:
-        conn.rollback()
         return {"status": "error", "message": str(e)}
     finally:
         try:

@@ -17,8 +17,9 @@ from app.memory import recuperar_historico
 # o resultado é sempre vazio: cada conversa tem um id diferente da anterior.
 #
 # Para achar o passado precisamos de um identificador ESTÁVEL do usuário —
-# o user_id. Enquanto o front não mandar um, o fallback para thread_id mantém
-# a tool funcionando (e é o suficiente para testar com um id fixo à mão).
+# o user_id, que vem do contexto da requisição (config["configurable"]["user_id"]).
+# NÃO há fallback para thread_id: sem user_id a tool recusa, em vez de buscar
+# (ou expor) o histórico de uma "conversa" que o usuário nunca teve.
 # ==============================================================================
 
 
@@ -36,7 +37,7 @@ def buscar_historico(busca: str, config: RunnableConfig) -> str:
         busca: assunto a procurar nos resumos das conversas anteriores.
     """
     configuravel = (config or {}).get("configurable", {})
-    user_id      = configuravel.get("user_id") or configuravel.get("thread_id")
+    user_id      = configuravel.get("user_id")
 
     if not user_id:
         return "Não foi possível identificar o usuário para buscar o histórico."

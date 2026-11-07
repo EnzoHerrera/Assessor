@@ -1,10 +1,12 @@
 from typing import Optional, List
 from langchain.tools import tool
+from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel, Field
 
 # A conexão com o Postgres agora vem de um lugar só (antes era uma get_conn()
 # local, idêntica à de financeiro.py).
 from app.tools.db import get_conn
+from app.tools.write_staging import preparar_escrita
 
 
 class AddEventArgs(BaseModel):
@@ -27,39 +29,20 @@ def add_event(
     end_time: Optional[str] = None,
     location: Optional[str] = None,
     notes: Optional[str] = None,
+    *,
+    config: RunnableConfig,
 ) -> dict:
-    """Insere um evento/compromisso na agenda (tabela events) do banco de dados Postgres."""
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            INSERT INTO events
-                (title, start_time, end_time, location, notes, source_text)
-            VALUES
-                (%s, %s::timestamptz, %s::timestamptz, %s, %s, %s)
-            RETURNING id, start_time, end_time;
-            """,
-            (title, start_time, end_time, location, notes, source_text),
-        )
-        new_id, start, end = cur.fetchone()
-        conn.commit()
-        return {
-            "status": "ok",
-            "id": new_id,
-            "title": title,
-            "start_time": str(start),
-            "end_time": str(end) if end else None,
-        }
-    except Exception as e:
-        conn.rollback()
-        return {"status": "error", "message": str(e)}
-    finally:
-        try:
-            cur.close()
-            conn.close()
-        except Exception:
-            pass
+    """Prepara um evento/compromisso na agenda (tabela events do Postgres).
+    A gravação definitiva acontece no fim do turno, depois da verificação da resposta."""
+    turno_id = (config or {}).get("configurable", {}).get("turn_id")
+    return preparar_escrita("add_event", {
+        "title": title,
+        "source_text": source_text,
+        "start_time": start_time,
+        "end_time": end_time,
+        "location": location,
+        "notes": notes,
+    }, turno_id)
 
 
 #############
