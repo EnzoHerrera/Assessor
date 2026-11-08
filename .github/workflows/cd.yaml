@@ -1,0 +1,68 @@
+name: CD
+
+on:
+
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - main
+
+jobs:
+
+  deploy:
+    runs-on: ubuntu-latest
+    if: >
+      github.event.workflow_run.conclusion == 'success'
+      &&
+      github.event.workflow_run.event == 'push'
+    concurrency:
+      group: deploy-render
+      cancel-in-progress: false
+    steps:
+      - name: Disparar deploy no Render
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          COMMIT_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          # Monta a URL final, pedindo ao Render esse commit específico
+          URL_FINAL="${RENDER_DEPLOY_HOOK_URL}&ref=${COMMIT_SHA}"
+
+          # Chama o hook. O --fail faz o passo falhar se o Render der erro.
+          curl --fail -sS -X POST "$URL_FINAL"
+
+          echo "Deploy do commit ${COMMIT_SHA} solicitado ao Render."
+
+      - name: Aguardar o app responder em /health
+        if: ${{ vars.RENDER_APP_URL != '' }}
+        env:
+          APP_URL: ${{ vars.RENDER_APP_URL }}
+        run: |
+          # Quantas vezes tentar e quantos segundos esperar entre tentativas
+          # (60 x 10s = até 10 minutos)
+          MAX_TENTATIVAS=60
+          INTERVALO=10
+
+          for tentativa in $(seq 1 $MAX_TENTATIVAS); do
+
+            # Pede o /health e guarda só o código HTTP da resposta
+            codigo=$(curl -s -o /dev/null -w "%{http_code}" "$APP_URL/health" || true)
+
+            echo "Tentativa $tentativa de $MAX_TENTATIVAS: HTTP $codigo"
+
+            # Se respondeu 200, o app está no ar e o passo termina com sucesso
+            if [ "$codigo" = "200" ]; then
+              echo "App no ar."
+              exit 0
+            fi
+
+            # Senão, espera um pouco e tenta de novo
+            sleep $INTERVALO
+
+          done
+
+          # Esgotou as tentativas: falha o passo
+          echo "O app não respondeu a tempo."
+          exit 1
